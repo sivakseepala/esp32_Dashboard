@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ESP32 Real-Time Telemetry Dashboard</title>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <style>
+    :root {
+      --bg-page: #0f172a;
+      --bg-panel: #1e293b;
+      --bg-card: #334155;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent-blue: #38bdf8;
+      --accent-green: #22c55e;
+      --accent-red: #ef4444;
+      --accent-amber: #f59e0b;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg-page);
+      color: var(--text-main);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 480px;
+      background: var(--bg-panel);
+      padding: 28px;
+      border-radius: 16px;
+      box-shadow: 0 10 25px rgba(0, 0, 0, 0.45);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      text-align: center;
+    }
+
+    h2 { font-size: 22px; font-weight: 700; margin-bottom: 12px; }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: rgba(15, 23, 42, 0.6);
+      padding: 6px 14px;
+      border-radius: 999px;
+      margin-bottom: 16px;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--accent-amber);
+      transition: background 0.3s ease, box-shadow 0.3s ease;
+    }
+    .dot.online { background: var(--accent-green); box-shadow: 0 0 8px var(--accent-green); }
+    .dot.offline { background: var(--accent-red); box-shadow: 0 0 8px var(--accent-red); }
+
+    .wokwi-link {
+      display: inline-block;
+      margin-bottom: 20px;
+      font-size: 13px;
+      color: var(--accent-blue);
+      text-decoration: none;
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      padding: 6px 12px;
+      border-radius: 8px;
+      transition: background 0.2s ease;
+    }
+    .wokwi-link:hover { background: rgba(56, 189, 248, 0.1); }
+
+    .cards {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .card {
+      background: var(--bg-card);
+      padding: 18px 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      transition: opacity 0.3s ease;
+    }
+    .card.dimmed { opacity: 0.45; }
+
+    .card-label {
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+    }
+
+    .val {
+      font-size: 32px;
+      font-weight: 700;
+      color: var(--accent-blue);
+      margin-top: 8px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .control-panel {
+      background: rgba(15, 23, 42, 0.4);
+      padding: 18px;
+      border-radius: 12px;
+    }
+
+    .control-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .led-pill {
+      font-size: 12px;
+      padding: 3px 10px;
+      border-radius: 6px;
+      background: var(--bg-card);
+      color: var(--text-muted);
+    }
+    .led-pill.active { background: rgba(34, 197, 94, 0.2); color: var(--accent-green); }
+
+    .btn-group {
+      display: flex;
+      gap: 12px;
+    }
+
+    button {
+      flex: 1;
+      padding: 12px 18px;
+      font-size: 15px;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: transform 0.1s ease, opacity 0.2s ease;
+    }
+    button:active { transform: scale(0.97); }
+    button:disabled { opacity: 0.35; cursor: not-allowed; }
+
+    .btn-on { background: var(--accent-green); color: #fff; }
+    .btn-off { background: var(--accent-red); color: #fff; }
+
+    .timestamp {
+      margin-top: 16px;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>ESP32 Live Dashboard</h2>
+
+    <div>
+      <div class="status-badge">
+        <span id="statusDot" class="dot offline"></span>
+        <span id="statusText">Wokwi ESP32: Not Connected</span>
+      </div>
+    </div>
+
+    <a class="wokwi-link" href="https://wokwi.com/projects/477949665866039297" target="_blank" rel="noopener">
+      Open Wokwi Simulation ↗
+    </a>
+
+    <div class="cards">
+      <div id="tempCard" class="card dimmed">
+        <div class="card-label">Temperature</div>
+        <div class="val"><span id="temp">--</span> °C</div>
+      </div>
+      <div id="humCard" class="card dimmed">
+        <div class="card-label">Humidity</div>
+        <div class="val"><span id="hum">--</span> %</div>
+      </div>
+    </div>
+
+    <div class="control-panel">
+      <div class="control-header">
+        <span>GPIO 2 LED Control</span>
+        <span id="ledBadge" class="led-pill">State: OFFLINE</span>
+      </div>
+      <div class="btn-group">
+        <button id="btnOn" class="btn-on" onclick="sendLED('ON')" disabled>Turn LED ON</button>
+        <button id="btnOff" class="btn-off" onclick="sendLED('OFF')" disabled>Turn LED OFF</button>
+      </div>
+    </div>
+
+    <div id="lastUpdated" class="timestamp">Start the Wokwi simulation to view live telemetry</div>
+  </div>
+
+  <script>
+    const CONFIG = Object.freeze({
+      BROKER_URL: "wss://broker.hivemq.com:8884/mqtt",
+      TOPIC_SENSOR: "wokwi/DSP_Assignment/sensor",
+      TOPIC_LED: "wokwi/DSP_Assignment/led",
+      TOPIC_STATUS: "wokwi/DSP_Assignment/status",
+      WATCHDOG_TIMEOUT_MS: 6000 // Mark offline if no packet arrives within 6 seconds
+    });
+
+    const UI = {
+      statusDot: document.getElementById("statusDot"),
+      statusText: document.getElementById("statusText"),
+      tempCard: document.getElementById("tempCard"),
+      humCard: document.getElementById("humCard"),
+      temp: document.getElementById("temp"),
+      hum: document.getElementById("hum"),
+      ledBadge: document.getElementById("ledBadge"),
+      btnOn: document.getElementById("btnOn"),
+      btnOff: document.getElementById("btnOff"),
+      lastUpdated: document.getElementById("lastUpdated")
+    };
+
+    let watchdogTimer = null;
+
+    function setDeviceOffline(reason = "Wokwi ESP32: Not Connected") {
+      if (watchdogTimer) {
+        clearTimeout(watchdogTimer);
+        watchdogTimer = null;
+      }
+      UI.statusDot.className = "dot offline";
+      UI.statusText.textContent = reason;
+      UI.temp.textContent = "--";
+      UI.hum.textContent = "--";
+      UI.tempCard.classList.add("dimmed");
+      UI.humCard.classList.add("dimmed");
+      UI.ledBadge.textContent = "State: OFFLINE";
+      UI.ledBadge.className = "led-pill";
+      UI.btnOn.disabled = true;
+      UI.btnOff.disabled = true;
+      UI.lastUpdated.textContent = "Waiting for Wokwi simulation to start...";
+    }
+
+    function setDeviceOnline() {
+      UI.statusDot.className = "dot online";
+      UI.statusText.textContent = "Wokwi ESP32: Connected (Live)";
+      UI.tempCard.classList.remove("dimmed");
+      UI.humCard.classList.remove("dimmed");
+      UI.btnOn.disabled = false;
+      UI.btnOff.disabled = false;
+    }
+
+    function resetWatchdog() {
+      if (watchdogTimer) clearTimeout(watchdogTimer);
+      watchdogTimer = setTimeout(() => {
+        setDeviceOffline("Wokwi ESP32: Not Connected (Simulation Stopped)");
+      }, CONFIG.WATCHDOG_TIMEOUT_MS);
+    }
+
+    const client = mqtt.connect(CONFIG.BROKER_URL, {
+      keepalive: 15,
+      reconnectPeriod: 2000,
+      connectTimeout: 10000
+    });
+
+    client.on("connect", () => {
+      // Connected to broker, now wait for actual ESP32 heartbeat before showing Online
+      setDeviceOffline("Wokwi ESP32: Not Connected");
+      client.subscribe([CONFIG.TOPIC_SENSOR, CONFIG.TOPIC_STATUS], { qos: 1 });
+    });
+
+    client.on("offline", () => {
+      setDeviceOffline("Internet / Broker Disconnected");
+    });
+
+    client.on("message", (topic, message) => {
+      const payloadStr = message.toString();
+
+      // If Broker Last Will announces ESP32 dropped off
+      if (topic === CONFIG.TOPIC_STATUS) {
+        if (payloadStr === "OFFLINE") {
+          setDeviceOffline("Wokwi ESP32: Not Connected");
+        }
+        return;
+      }
+
+      // Live Telemetry Heartbeat from Wokwi ESP32
+      if (topic === CONFIG.TOPIC_SENSOR) {
+        try {
+          const data = JSON.parse(payloadStr);
+
+          setDeviceOnline();
+          resetWatchdog();
+
+          if (typeof data.temp === "number") {
+            UI.temp.textContent = data.temp.toFixed(1);
+          }
+          if (typeof data.hum === "number") {
+            UI.hum.textContent = data.hum.toFixed(1);
+          }
+          if (data.led === "ON" || data.led === "OFF") {
+            UI.ledBadge.textContent = `State: ${data.led}`;
+            UI.ledBadge.className = `led-pill ${data.led === "ON" ? "active" : ""}`;
+          }
+
+          UI.lastUpdated.textContent = `Last live packet: ${new Date().toLocaleTimeString()}`;
+        } catch (err) {
+          console.warn("Ignored malformed JSON:", err);
+        }
+      }
+    });
+
+    function sendLED(state) {
+      if (!client.connected || UI.btnOn.disabled) return;
+      client.publish(CONFIG.TOPIC_LED, state, { qos: 1 });
+    }
+  </script>
+</body>
+</html>
